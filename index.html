@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Tracker</title>
+    <!-- Favicon: A simple SVG data URI representing a list/progress -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" type="image/svg+xml">
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Apply Inter font and ensure full viewport coverage */
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            /* Ensure the layout is fully adaptive */
+            overflow-x: hidden; 
+            overflow-y: hidden; /* Hide potential scrollbars from 3D canvas */
+        }
+        /* Style for the 3D canvas */
+        #three-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+        /* Style for the UI container to float above the 3D canvas */
+        #app-container {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            background-color: rgba(0, 0, 0, 0.4); /* Subtle overlay for contrast */
+        }
+        /* Custom scrollbar for task list */
+        #task-list-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        #task-list-container::-webkit-scrollbar-thumb {
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+        .task-item:hover .delete-btn {
+            opacity: 1;
+        }
+        .delete-btn {
+            transition: opacity 0.2s;
+            opacity: 0;
+        }
+        /* Style for the progress input to be subtle */
+        .progress-input {
+            width: 50px;
+            text-align: right;
+            padding: 2px 4px;
+            border: none;
+            background: transparent;
+            color: #9ca3af; /* gray-400 */
+            font-size: 0.75rem;
+            line-height: 1rem;
+            transition: all 0.2s;
+        }
+        .progress-input:focus {
+            background: rgba(255, 255, 255, 0.1);
+            color: #e5e7eb; /* gray-200 */
+            border-radius: 4px;
+            outline: none;
+        }
+        .task-progress-bar {
+            height: 4px;
+            border-radius: 9999px; /* Full rounded corners */
+            transition: width 0.3s ease-out, background-color 0.3s;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Three.js Canvas Container -->
+    <canvas id="three-canvas"></canvas>
+
+    <!-- Main Application UI -->
+    <div id="app-container">
+
+        <!-- Main Card -->
+        <!-- Use max-w-lg and adaptive padding for responsiveness -->
+        <div class="w-full max-w-lg bg-gray-900/90 backdrop-blur-sm p-6 md:p-8 rounded-xl shadow-2xl border border-gray-700/50">
+
+            <h1 class="text-3xl font-extrabold text-white mb-2 tracking-tight">Progress Navigator</h1>
+            <p class="text-sm text-gray-400 mb-6">Manage your tasks and see your progress visualized in 3D.</p>
+
+            <!-- Project Stats/Updates Section -->
+            <div id="project-stats" class="bg-indigo-900/50 p-4 rounded-lg mb-6 border border-indigo-700/50 transition duration-300 shadow-lg">
+                <h2 class="text-xl font-semibold text-white mb-2">Tasks Update</h2>
+                <div class="flex justify-between items-center space-x-4">
+                    <p class="text-gray-300 text-sm">Total Tasks:</p>
+                    <span id="total-tasks" class="text-lg font-bold text-yellow-300">0</span>
+                </div>
+                <div class="flex justify-between items-center space-x-4">
+                    <p class="text-gray-300 text-sm">Tasks Completed:</p>
+                    <span id="completed-tasks" class="text-lg font-bold text-green-400">0</span>
+                </div>
+                <div class="flex justify-between items-center space-x-4 mt-2 pt-2 border-t border-indigo-700">
+                    <p class="text-gray-300 font-medium">Progress:</p>
+                    <span id="progress-percent" class="text-2xl font-extrabold text-indigo-300">0%</span>
+                </div>
+            </div>
+
+            <!-- Add Task Form (Single Entry) -->
+            <form id="add-task-form" class="flex space-x-2 mb-6">
+                <!-- Flex-grow ensures input takes most available space -->
+                <input
+                    type="text"
+                    id="task-input"
+                    placeholder="Enter a new task (e.g., Design UI) and press Enter"
+                    required
+                    class="flex-grow p-3 text-sm rounded-lg bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150"
+                >
+                <button
+                    type="submit"
+                    id="add-task-button"
+                    class="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-md transition duration-150 active:scale-95"
+                >
+                    Add
+                </button>
+            </form>
+
+            <!-- Task List -->
+            <!-- Max height and overflow ensures list is scrollable within card -->
+            <div id="task-list-container" class="max-h-80 overflow-y-auto pr-2">
+                <ul id="task-list" class="space-y-3">
+                    <!-- Tasks will be inserted here by JavaScript -->
+                    <li id="loading-indicator" class="text-center py-4 text-gray-500">Loading tasks...</li>
+                </ul>
+            </div>
+            
+             <p class="text-xs text-yellow-500 mt-4 text-center">
+                 Data is stored locally in your browser and will not sync across devices.
+             </p>
+
+        </div>
+
+    </div>
+
+    <!-- Three.js Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script type="module">
+        // --- 1. GLOBALS AND CONFIGURATION ---
+        
+        let localTasks = []; 
+        
+        const LOCAL_STORAGE_KEY = 'generic_todo_tasks';
+        
+        // A minimal set of common Lucide icons to use
+        const DEFAULT_ICON = 'list';
+        const ICON_SET = {
+            list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+            // Defined common icons used for SVG rendering
+        };
+
+        const lucideIconToSvg = (iconName) => {
+            const svgContent = ICON_SET[iconName] || ICON_SET[DEFAULT_ICON];
+            return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-indigo-400 mr-2 flex-shrink-0">${svgContent}</svg>`;
+        };
+
+        // --- 2. LOCAL STORAGE OPERATIONS ---
+
+        const loadLocalTasks = () => {
+            const tasksJson = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (tasksJson) {
+                try {
+                    localTasks = JSON.parse(tasksJson).map(task => ({
+                        ...task,
+                        id: task.id || `local-${Date.now()}-${Math.random()}`,
+                        createdAt: task.createdAt || Date.now() 
+                    }));
+                } catch (e) {
+                    console.error("Error parsing local tasks:", e);
+                    localTasks = [];
+                }
+            } else {
+                localTasks = [];
+            }
+            updateUIFromLocalTasks();
+        };
+
+        const saveLocalTasks = () => {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localTasks));
+            updateUIFromLocalTasks();
+        };
+        
+        const updateUIFromLocalTasks = () => {
+            // Sort by creation time (newest first)
+            const tasks = [...localTasks].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); 
+            
+            let totalTasks = tasks.length;
+            let completedTasks = tasks.filter(t => t.completed).length;
+            let totalProgress = tasks.reduce((sum, t) => sum + (t.progress || 0), 0);
+            
+            const averageProgress = totalTasks > 0 ? totalProgress / totalTasks : 0;
+            
+            renderTasks(tasks);
+            updateStats(totalTasks, completedTasks, averageProgress);
+            updateThreeDProgress(totalTasks, completedTasks);
+        };
+
+        // --- 3. CRUD OPERATIONS (LOCAL STORAGE) ---
+
+        const addTask = async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('task-input');
+            const button = document.getElementById('add-task-button');
+            const taskName = input.value.trim();
+
+            if (!taskName) return;
+            
+            button.disabled = true;
+
+            try {
+                // Create task INSTANTLY and add to local storage
+                const taskId = `local-${Date.now()}-${Math.random()}`;
+                const newTask = {
+                    id: taskId,
+                    name: taskName,
+                    completed: false,
+                    progress: 0,
+                    icon: DEFAULT_ICON, // Always use the default icon
+                    createdAt: Date.now()
+                };
+                
+                localTasks.push(newTask);
+                saveLocalTasks(); // Triggers immediate UI update
+                
+                input.value = ''; // Clear input immediately
+                
+            } catch (error) {
+                console.error("Error adding task: ", error);
+            } finally {
+                button.disabled = false;
+            }
+        };
+
+        const updateTask = (id, data) => {
+            const index = localTasks.findIndex(t => t.id === id);
+            if (index > -1) {
+                localTasks[index] = { ...localTasks[index], ...data };
+                saveLocalTasks();
+            }
+        };
+
+        const toggleTask = (id, isCompleted) => {
+            const newProgress = isCompleted ? 0 : 100;
+            updateTask(id, {
+                completed: !isCompleted,
+                progress: newProgress
+            });
+        };
+
+        const updateTaskProgress = (id, newProgress) => {
+            const progress = Math.min(100, Math.max(0, parseInt(newProgress) || 0));
+            const completed = progress === 100;
+            
+            updateTask(id, {
+                progress: progress,
+                completed: completed
+            });
+        };
+
+        const deleteTask = (id) => {
+            localTasks = localTasks.filter(t => t.id !== id);
+            saveLocalTasks();
+        };
+
+        // --- 4. UI RENDERING AND STATS ---
+
+        const renderTasks = (tasks) => {
+            const taskListEl = document.getElementById('task-list');
+            taskListEl.innerHTML = ''; 
+
+            if (tasks.length === 0) {
+                taskListEl.innerHTML = '<li class="text-gray-500 text-center py-4">No tasks yet! Add one above.</li>';
+                return;
+            }
+
+            tasks.forEach(task => {
+                const isCompleted = task.completed;
+                const progress = task.progress || 0;
+                const iconSvg = lucideIconToSvg(task.icon);
+
+                const listItem = document.createElement('li');
+                listItem.className = `task-item rounded-xl shadow-md border overflow-hidden transition duration-200 ${
+                    isCompleted 
+                        ? 'bg-green-900/40 border-green-700/50' 
+                        : 'bg-gray-800/60 border-gray-700 hover:bg-gray-800/80'
+                }`;
+                
+                // Determine progress bar color
+                const progressColor = isCompleted ? 'bg-green-500' : (progress < 100 ? 'bg-indigo-500' : 'bg-green-500');
+
+                listItem.innerHTML = `
+                    <div class="p-3 flex items-center justify-between">
+                        <!-- Left side: Checkbox, Icon, Name (using min-w-0 for responsiveness) -->
+                        <div class="flex items-center flex-grow min-w-0">
+                            <input 
+                                type="checkbox" 
+                                id="task-${task.id}" 
+                                ${isCompleted ? 'checked' : ''}
+                                class="form-checkbox h-5 w-5 text-indigo-500 bg-gray-700 border-gray-600 rounded focus:ring-indigo-400 cursor-pointer flex-shrink-0"
+                                onclick="window.taskApp.toggleTask('${task.id}', ${isCompleted})"
+                            >
+                            <div class="ml-3 flex items-center min-w-0">
+                                ${iconSvg}
+                                <label 
+                                    for="task-${task.id}" 
+                                    class="text-white text-sm truncate ${isCompleted ? 'line-through text-gray-400' : ''} cursor-pointer"
+                                >
+                                    ${task.name}
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Right side: Progress Input and Delete Button (using flex-shrink-0 for priority) -->
+                        <div class="flex items-center space-x-2 flex-shrink-0">
+                            <div class="text-xs text-gray-500 mr-1">Progress:</div>
+                            <input 
+                                type="number"
+                                min="0"
+                                max="100"
+                                value="${progress}"
+                                class="progress-input"
+                                onchange="window.taskApp.handleProgressChange('${task.id}', this.value)"
+                                onblur="window.taskApp.handleProgressChange('${task.id}', this.value)"
+                            >%
+                            <button 
+                                class="delete-btn text-gray-500 hover:text-red-500 p-1 rounded-full hover:bg-gray-700 transition duration-150"
+                                onclick="window.taskApp.deleteTask('${task.id}')"
+                                aria-label="Delete Task"
+                            >
+                                <!-- Trash Icon SVG -->
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 100 2v6a1 1 0 100-2V8z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Progress Bar Line -->
+                    <div class="h-1 bg-gray-700/50">
+                        <div class="task-progress-bar h-1 ${progressColor}" style="width: ${progress}%;"></div>
+                    </div>
+                `;
+                taskListEl.appendChild(listItem);
+            });
+        };
+        
+        const updateStats = (total, completed, averageProgress) => {
+            const overallProgress = total > 0 ? Math.round(averageProgress) : 0;
+            document.getElementById('total-tasks').textContent = total;
+            document.getElementById('completed-tasks').textContent = completed;
+            document.getElementById('progress-percent').textContent = `${overallProgress}%`;
+        };
+
+        // --- 5. INITIALIZATION AND EVENT LISTENERS ---
+
+        window.taskApp = {
+            addTask,
+            toggleTask,
+            deleteTask,
+            handleProgressChange: (id, value) => {
+                 let progress = parseInt(value);
+                if (isNaN(progress)) progress = 0;
+                updateTaskProgress(id, progress);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadLocalTasks(); // Start in generic local mode
+            document.getElementById('add-task-form').addEventListener('submit', addTask);
+        });
+        
+        // --- 6. THREE.JS 3D BACKGROUND (Updated for Zoom/Animation) ---
+        
+        let scene, camera, renderer, progressCylinders = [];
+        const CYLINDER_COUNT = 15;
+        const BASE_COLOR = new THREE.Color(0x312e81); // Indigo-900
+        const COMPLETED_COLOR = new THREE.Color(0x10b981); // Green-500
+        const PROGRESS_CONTAINER = new THREE.Object3D(); 
+        
+        // New global variable for smooth animation timing
+        let clock = 0; 
+
+        const initThreeD = () => {
+            const canvas = document.getElementById('three-canvas');
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x111827, 10, 50); 
+
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.z = 15; // Base camera position
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setClearColor(0x111827, 1); 
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 5); 
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
+
+            for (let i = 0; i < CYLINDER_COUNT; i++) {
+                const geometry = new THREE.CylinderGeometry(0.3, 0.3, 10, 32);
+                const material = new THREE.MeshLambertMaterial({ color: BASE_COLOR, transparent: true, opacity: 0.2 });
+                const cylinder = new THREE.Mesh(geometry, material);
+                
+                const angle = (i / CYLINDER_COUNT) * Math.PI * 4;
+                const radius = 4;
+                cylinder.position.x = Math.cos(angle) * radius;
+                cylinder.position.y = Math.sin(angle) * radius;
+                cylinder.position.z = Math.random() * 5 - 2.5;
+                cylinder.rotation.x = Math.random() * Math.PI;
+                cylinder.rotation.y = Math.random() * Math.PI;
+
+                progressCylinders.push(cylinder);
+                PROGRESS_CONTAINER.add(cylinder);
+            }
+            scene.add(PROGRESS_CONTAINER);
+
+            window.addEventListener('resize', onWindowResize, false);
+            animate();
+        };
+
+        const onWindowResize = () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        };
+
+        const animate = () => {
+            requestAnimationFrame(animate);
+            
+            clock += 0.01; // Increment time for smooth animation
+
+            // --- Dynamic Rotation (Slightly faster) ---
+            PROGRESS_CONTAINER.rotation.x += 0.002;
+            PROGRESS_CONTAINER.rotation.y += 0.004;
+
+            // --- Zoom In/Zoom Out Effect (Attention Seeker) ---
+            // Uses a sine wave to oscillate the camera Z position for a smooth, looping zoom effect.
+            // Oscillates between Z=14.0 (Zoom In) and Z=16.0 (Zoom Out).
+            const zoomAmplitude = 1.0;
+            const zoomOffset = 15.0; 
+            // The 0.5 factor controls the speed of the zoom cycle
+            camera.position.z = zoomOffset + Math.sin(clock * 0.5) * zoomAmplitude; 
+
+            progressCylinders.forEach(cylinder => {
+                cylinder.rotation.z += 0.005;
+            });
+
+            renderer.render(scene, camera);
+        };
+
+        const updateThreeDProgress = (total, completed) => {
+            const progressRatio = total > 0 ? completed / total : 0;
+            const completedCount = Math.ceil(progressRatio * CYLINDER_COUNT);
+
+            progressCylinders.forEach((cylinder, index) => {
+                const isCompletedBlock = index < completedCount;
+                const material = cylinder.material;
+
+                if (isCompletedBlock) {
+                    material.color.lerp(COMPLETED_COLOR, 0.1);
+                    material.opacity = Math.min(0.8, material.opacity + 0.05);
+                } else {
+                    material.color.lerp(BASE_COLOR, 0.1);
+                    material.opacity = Math.max(0.2, material.opacity - 0.05);
+                }
+                
+                const scaleY = isCompletedBlock ? 1.5 : 1.0;
+                cylinder.scale.y += (scaleY - cylinder.scale.y) * 0.1;
+                
+                cylinder.position.z += (Math.sin(Date.now() * 0.0005 + index) * 0.01);
+            });
+        };
+
+        window.onload = function () {
+            initThreeD();
+        }
+
+    </script>
+</body>
+</html>
